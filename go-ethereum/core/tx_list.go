@@ -30,15 +30,10 @@ import (
 	//new import
 	"fmt"
 	"strings"
-	"time"
-	"log"
-	"os"
 	"github.com/onrik/ethrpc"
 	"encoding/hex"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"database/sql"
-	_ "github.com/go-sql-driver/mysql"
-	//"golang.org/x/crypto/sha3"
+	
 )
 
 // nonceHeap is a heap.Interface implementation over 64bit unsigned integers for
@@ -263,30 +258,14 @@ func (l *txList) Overlaps(tx *types.Transaction) bool {
 // If the new transaction is accepted into the list, the lists' cost and gas
 // thresholds are also potentially updated.
 func (l *txList) Add(pool *TxPool,from common.Address, tx *types.Transaction, priceBump uint64) (bool, *types.Transaction) {	
-	// If there's an older better transaction, abort
-	t1 := time.Now()
-	txpoolLog, err := os.OpenFile("txpoolLog",os.O_APPEND|os.O_CREATE|os.O_WRONLY,0644)
-	if err != nil {
-		fmt.Println(err)
-	}
-	defer txpoolLog.Close()
-	logger := log.New(txpoolLog, "txpoolLog: ", log.LstdFlags)
-	logger.Println("Tranasction to address: ",tx.To())
-	logger.Println("Transaction gas: ",tx.Gas())
-	logger.Println("Transaction gas price: ",tx.GasPrice())
-	logger.Println("Transaction value: ",tx.Value())
-	logger.Println("transaction nonce: ",tx.Nonce())
-	logger.Println("transaction data: ",tx.Data())
-	logger.Println("transaction hash: ",tx.Hash())
-	logger.Println("transaction size:",tx.Size())
+	// If there's an older transaction but better than new one, abort new one
 	old := l.txs.Get(tx.Nonce())
-	if old != nil {
+	if old != nil {	
 		if old.To().Hex() == from.Hex(){
 			// The pending/quene transaction's to address and new transaction's sender are same.
 			// (The sender's previous transaction's to address and from address are same.)
 			// Replace pending/quene transaction without gasPrice limit. 
-			fmt.Println("Old transaction's to and from the same, replace it without gasPrice.")
-			
+			fmt.Println("Old transaction's to and from the same, replace it without gasPrice.")		
 								
 		}else if tx.To().Hex() == from.Hex(){
 			// The new transaction's sender and to address are same.
@@ -301,8 +280,9 @@ func (l *txList) Add(pool *TxPool,from common.Address, tx *types.Transaction, pr
 			if old.GasPrice().Cmp(tx.GasPrice()) >= 0 || threshold.Cmp(tx.GasPrice()) > 0 {
 				return false, nil
 			}
+			
 			go func(){
-				//connect blockchain
+				//connect blockchain's rpc address		
 				client := ethrpc.New("http://127.0.0.1:8545")
 				//send warning transaction to replaced transaction's to address
 				txhash, err := client.EthSendTransaction(ethrpc.T{
@@ -311,35 +291,32 @@ func (l *txList) Add(pool *TxPool,from common.Address, tx *types.Transaction, pr
 				})
 				if err != nil {
 					fmt.Println(err)
+					fmt.Println("from: ",from.Hex())
+					fmt.Println("To: ",old.To().Hex())
 				}
-				fmt.Println("tx_notification: ",txhash)
-				//modify valuable's type
-				//fmt.Println("hextohash: " ,common.HexToHash(txhash))
-				//t := strings.Replace(common.HexToHash(txhash).Hex(), "0x", "", 1)
+				
 				txAddress := common.HexToAddress(txhash)
-				fmt.Println("txAddress: ", txAddress)
 				paddedAddress := common.LeftPadBytes(txAddress.Bytes(),32)
 				temp := hexutil.Encode(paddedAddress)				
 				t := strings.Replace(temp, "0x", "", 1)
-				fmt.Println("t: ",t)
 				data := "0xf9fbd554" + t
-				fmt.Println("data: ",data)
 				
 				//call smart contract's function to send event
-				txlog, err := client.EthSendTransaction(ethrpc.T{
-					From: "0x07e7c8904f8b6cab9cb4b0b9393dd767289e80f2",
-					To: "0xfcf1538Ab751126E47641b4d36Ad281BE217C579",
+				txlog, err := client.EthSendTransaction(ethrpc.T{					
+					From: from.Hex(),
+					//eventlog contract's address
+					To: "0x...",					
 					Data: data,
 				})			
 				if err != nil {
 					fmt.Println(err)
 				}
-				fmt.Println("txlog",txlog)
-				
+				fmt.Println(txlog)				
 			}()
 			
 
 		}
+	
 	}
 	// Otherwise overwrite the old transaction with the current one
 	l.txs.Put(tx)
@@ -349,13 +326,8 @@ func (l *txList) Add(pool *TxPool,from common.Address, tx *types.Transaction, pr
 	if gas := tx.Gas(); l.gascap < gas {
 		l.gascap = gas
 	}
-	// Save new transaction into database. 
-	/*erro := SaveDatabase(tx.To(), from, tx.Nonce(), tx.Hash())
-	if erro != nil {
-		fmt.Println(erro)
-	}*/
-	elapsed := time.Since(t1)
-	fmt.Println("Running time",elapsed)
+	
+	
 	return true, old
 }
 
@@ -366,119 +338,6 @@ func decodeHex(s string) []byte {
 		panic(err)
 	}
 	return b
-}
-/*
-const (
-	// HashLength is the expected length of the hash
-	HashLength = 32
-	// AddressLength is the expected length of the address
-	AddressLength = 20
-)
-
-type Address [AddressLength]byte
-
-func (a Address) Hex() string {
-	unchecksummed := hex.EncodeToString(a[:])
-	sha := sha3.NewLegacyKeccak256()
-	sha.Write([]byte(unchecksummed))
-	hash := sha.Sum(nil)
-
-	result := []byte(unchecksummed)
-	for i := 0; i < len(result); i++ {
-		hashByte := hash[i/2]
-		if i%2 == 0 {
-			hashByte = hashByte >> 4
-		} else {
-			hashByte &= 0xf
-		}
-		if result[i] > '9' && hashByte > 7 {
-			result[i] -= 32
-		}
-	}
-	return "0x" + string(result)
-}*/
-
-//save new transaction to database
-
-func SaveDatabase(to *common.Address, from common.Address, nonce uint64, hash common.Hash) error {
-	var (
-		//get from new transaction
-		txhash   string
-		msg_to   string
-		msg_from string
-		txnonce    uint64
-		//insert to db
-		status string
-		//get from db
-		addr_to string
-	)
-	//variable prepare
-	if to != nil {
-		//fmt.Println("msg.to: ",to.Hex())
-		msg_to = to.Hex()
-		//fmt.Println("to: ",to)
-	} else {
-		msg_to = ""
-	}
-	msg_from = from.Hex()
-	txhash = hash.Hex()
-	txnonce = nonce
-	//log
-
-	//fmt.Println("txhash: ", txhash)
-	//fmt.Println("from address: ", msg_from)
-	//fmt.Println("nonce", txnonce)
-	//fmt.Println("to address: ", msg_to)
-
-	//connect to db and prepare sql command
-	db, err := sql.Open("mysql", "root:0000@tcp(127.0.0.1:3306)/ethereum")
-	if err != nil {
-		//log.Fatal(err)
-		fmt.Println(err)
-		return err
-	}
-	defer db.Close()
-	err = db.Ping()
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-	//insert sql with attack transaction
-	t, err := db.Prepare("INSERT INTO dbtransaction(txhash,addr_from,addr_to,nonce,status) VALUES(?,?,?,?,?)")
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-	//insert sql with common transaction
-	n, err := db.Prepare("INSERT INTO transaction(txhash,addr_from,addr_to,nonce) VALUES(?,?,?,?)")
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-	//search sql
-	erro := db.QueryRow("SELECT addr_to FROM transaction WHERE addr_from = ? AND nonce = ?", msg_from, txnonce).Scan(&addr_to)
-	if erro != nil {
-		//new transaction
-		_, err = n.Exec(txhash, msg_from, msg_to, txnonce)
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-	}else{	
-		//sender is not same
-		//insert transaction info
-		status = "alert"
-		_, err = t.Exec(txhash, msg_from, msg_to, txnonce, status)
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-	
-	}
-	
-	
-
-	return nil
 }
 
 // Forward removes all transactions from the list with a nonce lower than the
